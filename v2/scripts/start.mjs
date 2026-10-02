@@ -13,6 +13,7 @@
 import { spawn } from 'node:child_process'
 import process from 'node:process'
 import { cpSync, existsSync, mkdirSync } from 'node:fs'
+import { ensureClaudeLogin } from './claude-login.mjs'
 
 /**
  * Put MediaPipe's WebAssembly where the page can actually load it.
@@ -112,6 +113,9 @@ if (port) {
 }
 
 vendorWasm()
+
+// Everyone runs JARVIS on their own Claude account; check there is one here.
+if (!ensureClaudeLogin()) process.exit(1)
 
 console.log('\nJ.A.R.V.I.S. starting — the brain and the face.\n')
 run('bridge', 'node', ['bridge/server.mjs'], '36', bridgeEnv)

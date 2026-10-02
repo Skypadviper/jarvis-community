@@ -70,6 +70,28 @@ listens through the browser's own speech, and everything still works.
 
 ---
 
+## Your own JARVIS, on your own account
+
+Everyone who downloads JARVIS gets their own. There is no shared account and
+nothing personal in this repository: no keys, no logins, no history.
+
+- **The brain uses the Claude account logged in on your computer.** The first
+  time you run `npm start`, it checks for a login and, if there isn't one,
+  opens your browser so you can sign in with your own Claude account.
+- **Your tools are yours.** The MCP servers JARVIS can use are read from your own
+  Claude Code settings (`~/.claude.json`), so each person's JARVIS reaches
+  only their own mail, phone and services.
+- **Your keys stay on your machine.** Optional keys such as ElevenLabs go in a
+  `.env` file, which git ignores, so they can't be committed by accident.
+- **The brain only answers your computer.** It listens on `127.0.0.1`, so
+  nobody else on your network can send it commands. Don't set `JARVIS_HOST`
+  unless you mean to change that.
+
+Sharing a computer? Run `claude auth logout` when you're done so the next person
+signs in with their own account.
+
+---
+
 ## Requirements
 
 **In one line:** a Claude Code subscription, plus two free things every computer
