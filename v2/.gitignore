@@ -28,3 +28,8 @@ public/mediapipe/
 
 # Blender
 __pycache__
+
+# Secrets: API keys live here and must never be committed
+.env
+.env.*
+!.env.example
