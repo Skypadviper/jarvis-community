@@ -1,3 +1,58 @@
+# J.A.R.V.I.S. — v2: the ops floor
+
+v2 is the whole app, copied from the repository root, plus a second view: a 3D
+**ops floor** where JARVIS's work has bodies. Six humanoid agents — modelled,
+rigged and animated in Blender — stand in a lounge round a hub that glows in
+JARVIS's phase colour. When he calls a tool, the agent who owns that kind of work
+gets up, walks to their desk, sits down and types, with the job on their monitor.
+When the answer is in, they stand, wave and walk back.
+
+| Agent | Takes | Example |
+|---|---|---|
+| FRIDAY | web search, fetch, browser | "what happened in AI this week" |
+| KAREN | images, video, voice | "generate an image of the Mark Seven suit" |
+| EDITH | mail, calendar, messages | "summarise what's in my inbox" |
+| DUM-E | phone, home, music | "take a screenshot of my phone" |
+| VERONICA | GitHub, trackers, files, analytics | "open my GitHub notifications" |
+| J.A.R.V.I.S. | camera, vision, and anything unclaimed | "what am I holding" |
+
+**Interacting.** Click an agent (or a name in the console on the right) and type a
+job for them. With JARVIS powered on, the job goes to the brain exactly as if you
+had said it, and the agent you picked starts on it straight away; other agents
+join in as his tools fire. With JARVIS off, the agent does a demo run, so you can
+explore the floor first ("explore the ops floor first" on the start screen).
+Drag to orbit, scroll to zoom, **O** switches between the ops floor and the
+original reactor.
+
+```bash
+cd v2
+npm install
+npm start            # same as the root app; opens on the ops floor
+```
+
+### The Blender models
+
+`blender/build_agents.py` builds everything procedurally and writes:
+
+- `public/models/agent.glb` — one rigged humanoid (17 bones) with `Idle`, `Walk`,
+  `Sit`, `Type` and `Wave` clips. The app clones it six times and recolours the
+  `Glow` and `Visor` materials per agent.
+- `public/models/workstation.glb` — glass desk, monitor, keyboard, chair.
+- `blender/renders/*.png` — Cycles preview renders.
+
+```bash
+pip install bpy==4.2.0          # Blender as a Python module (Python 3.11)
+python3 blender/build_agents.py # or: blender -b -P blender/build_agents.py
+# --no-render skips the preview renders
+```
+
+To change the look, edit the script and run it again; the app picks up the new
+GLBs. The code side lives in `src/scene/Office.tsx` (the floor and the agents'
+walking, sitting and working), `src/agents/crew.ts` (roles, tool routing, task
+state) and `src/ui/OpsPanel.tsx` (the console).
+
+---
+
 # J.A.R.V.I.S.
 
 A browser voice assistant with an Iron Man holographic interface. Say

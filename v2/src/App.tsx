@@ -1,5 +1,8 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Scene } from './scene/Scene'
+import { Office } from './scene/Office'
+import { OpsPanel } from './ui/OpsPanel'
+import { useCrew, linkCrew, brainReady } from './agents/crew'
 import { Hud } from './ui/Hud'
 import { Boot } from './ui/Boot'
 import { Ignition } from './ui/Ignition'
@@ -72,6 +75,8 @@ const LEADING_NAME = new RegExp(`^(?:hey|hi|ok|okay|yo)?\\s*${NAME}\\b[\\s,.:!?-
 export default function App() {
   const store = useStore
   const phase = useStore((s) => s.phase)
+  const view = useCrew((s) => s.view)
+  const [preview, setPreview] = useState(false)
   const history = useRef<Msg[]>([])
   const speaker = useRef<ReturnType<typeof createSpeaker> | null>(null)
   const voice = useRef<Voice | null>(null)
@@ -629,6 +634,13 @@ export default function App() {
         return
       }
 
+      // O flips between the reactor and the ops floor.
+      if (e.key === 'o' && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault()
+        useCrew.getState().toggleView()
+        return
+      }
+
       // G puts the camera on and starts tracking hands. Off by default and
       // never implicit: a webcam that turns itself on because an interface
       // thought it might be useful is not a trade anyone agreed to.
@@ -723,13 +735,47 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  /**
+   * The crew. Tool calls put agents to work; a job typed into the ops panel
+   * arrives here as the outbox and is answered like anything said aloud.
+   */
+  useEffect(() => {
+    const unlink = linkCrew()
+    const unsend = useCrew.subscribe((s, prev) => {
+      if (s.outbox && s.outbox !== prev.outbox && brainReady()) {
+        store.getState().setError(null)
+        void respond(s.outbox.text)
+      }
+    })
+    return () => {
+      unlink()
+      unsend()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   return (
     <>
-      <Scene />
+      {view === 'office' ? <Office /> : <Scene />}
       <Hud />
+      <OpsPanel />
       <Boot />
       <Diagnostics />
-      <Ignition onStart={() => void powerOn()} />
+      {!preview && <Ignition onStart={() => void powerOn()} />}
+      {phase === 'offline' && (
+        <button
+          className={`ignition-alt${preview ? ' power' : ''}`}
+          onClick={() => {
+            if (preview) void powerOn()
+            else {
+              useCrew.getState().setView('office')
+              setPreview(true)
+            }
+          }}
+        >
+          {preview ? 'INITIALISE JARVIS' : 'explore the ops floor first →'}
+        </button>
+      )}
     </>
   )
 }
