@@ -105,6 +105,15 @@ const ALLOW_WRITES = process.env.JARVIS_ALLOW_WRITES === '1'
 const MODEL = process.env.JARVIS_MODEL ?? 'claude-opus-5'
 
 /**
+ * Tried in order when MODEL is overloaded or this account cannot use it.
+ *
+ * Aliases rather than ids on purpose: 'sonnet' and 'haiku' resolve to whatever
+ * the logged-in account actually has, so a plan without access to the default
+ * model still gets an answer instead of a brain that silently says nothing.
+ */
+const FALLBACK_MODELS = process.env.JARVIS_FALLBACK_MODEL ?? 'sonnet,haiku'
+
+/**
  * How hard the model thinks before answering.
  *
  * This was 'low', on the reasoning that a voice assistant is judged on latency
@@ -998,13 +1007,28 @@ const wss = new WebSocketServer({
     done(true)
   },
 })
-server.listen(PORT)
+/**
+ * Loopback only. Listening on every interface let anyone on the same network
+ * open this socket, and the origin check above cannot stop them: Origin is a
+ * header browsers set honestly, but any other program can write whatever it
+ * likes there. Whoever reaches this socket drives the owner's Claude account
+ * and every MCP server on the machine, so it stays on this computer unless
+ * JARVIS_HOST is set on purpose.
+ */
+const HOST = process.env.JARVIS_HOST ?? '127.0.0.1'
+server.listen(PORT, HOST)
 
-console.log(`[jarvis] bridge listening on ws://localhost:${PORT}`)
+console.log(`[jarvis] bridge listening on ws://${HOST}:${PORT}`)
+if (HOST !== '127.0.0.1' && HOST !== '::1' && HOST !== 'localhost') {
+  console.warn(
+    `[jarvis] WARNING: JARVIS_HOST=${HOST} exposes the bridge beyond this computer. ` +
+      'Anyone who can reach it can use your Claude account.',
+  )
+}
 console.log(
   `[jarvis] speech ${elevenKey() ? 'via ElevenLabs (key from MCP config)' : 'using browser fallback voice'}`,
 )
-console.log(`[jarvis] model ${MODEL} · effort ${EFFORT}`)
+console.log(`[jarvis] model ${MODEL} (fallback ${FALLBACK_MODELS}) · effort ${EFFORT}`)
 console.log(
   `[jarvis] writes ${ALLOW_WRITES ? 'ENABLED' : 'disabled'}` +
     (ALLOW_WRITES ? '' : ' — set JARVIS_ALLOW_WRITES=1 to permit shell/file/device actions'),
@@ -1031,6 +1055,29 @@ console.log(
  * What to tell the browser when a turn ends badly. Plain sentences, because
  * whatever reaches the client is liable to be spoken.
  */
+/**
+ * Turn a raw SDK or CLI failure into something the person at the screen can
+ * act on. The two that stop a fresh install dead are a Claude Code that is not
+ * logged in and an account that cannot use the configured model, and both
+ * otherwise surface as a JARVIS that hears you and answers nothing.
+ */
+function explain(raw) {
+  const text = String(raw ?? '')
+  if (/log ?in|logged in|invalid api key|authenticat|unauthori[sz]ed|\b401\b|oauth|credential/i.test(text)) {
+    return 'Claude Code is not logged in. Open a terminal, run `claude`, finish logging in, then restart JARVIS.'
+  }
+  if (/model/i.test(text) && /not.?found|not available|unavailable|invalid|access|permission|\b404\b|does not exist|unknown/i.test(text)) {
+    return `This Claude account cannot use the model "${MODEL}". Restart JARVIS with JARVIS_MODEL set to one it can use, e.g. sonnet.`
+  }
+  if (/ENOENT|spawn|not recognized|executable/i.test(text)) {
+    return 'Claude Code could not be started. Install it (npm install -g @anthropic-ai/claude-code), run `claude` once, then restart JARVIS.'
+  }
+  if (/rate.?limit|usage limit|\b429\b|quota/i.test(text)) {
+    return 'Your Claude usage limit has been reached. Try again once it resets.'
+  }
+  return text
+}
+
 const RESULT_FAILURES = {
   error_during_execution: 'The turn failed part way through.',
   error_max_turns: 'The turn ran too long and was stopped.',
@@ -1245,6 +1292,7 @@ wss.on('connection', (socket) => {
       // the settings files `settingSources: []` deliberately stops loading, so
       // without this line nothing in the project has a say at all.
       model: MODEL,
+      fallbackModel: FALLBACK_MODELS,
       effort: EFFORT,
       maxTurns: 24,
       permissionMode: 'default',
@@ -1353,9 +1401,14 @@ wss.on('connection', (socket) => {
                 `[jarvis] turn failed: ${msg.subtype}`,
                 msg.errors ?? '',
               )
+              const detail = [].concat(msg.errors ?? []).join(' ')
+              const explained = detail ? explain(detail) : ''
               sendTurn({
                 type: 'error',
-                message: RESULT_FAILURES[msg.subtype] ?? RESULT_FAILURES.default,
+                message:
+                  explained && explained !== detail
+                    ? explained
+                    : RESULT_FAILURES[msg.subtype] ?? RESULT_FAILURES.default,
               })
             }
             // Whatever was waiting on this turn to finish can go now. This is
@@ -1383,7 +1436,9 @@ wss.on('connection', (socket) => {
       }
     } catch (err) {
       console.error('[jarvis] session error:', err)
-      send({ type: 'error', message: String(err?.message ?? err) })
+      const message = explain(err?.message ?? err)
+      if (message !== String(err?.message ?? err)) console.error(`[jarvis] ${message}`)
+      send({ type: 'error', message })
       // The stream is finished either way — nothing will ever be read from it
       // again. Leaving the socket open would leave the client believing it has
       // a working bridge, and every later question would hang for ever waiting

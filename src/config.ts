@@ -71,7 +71,7 @@ export const BACKEND: 'bridge' | 'direct' = choice(
  * `wss://` maps to `https://` on its own, which is why this is a prefix swap
  * rather than a hardcoded scheme.
  */
-export const BRIDGE_WS_URL = str(import.meta.env.VITE_BRIDGE_URL) ?? 'ws://localhost:8787'
+export const BRIDGE_WS_URL = str(import.meta.env.VITE_BRIDGE_URL) ?? 'ws://127.0.0.1:8787'
 export const BRIDGE_HTTP_URL = BRIDGE_WS_URL.replace(/^ws/, 'http')
 
 /**
