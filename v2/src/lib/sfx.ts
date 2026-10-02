@@ -84,7 +84,7 @@ async function loadOverrides() {
     cues.map(async (cue) => {
       if (samples.has(cue)) return
       try {
-        const res = await fetch(`/audio/${cue}.mp3`)
+        const res = await fetch(`${import.meta.env.BASE_URL}audio/${cue}.mp3`)
         if (!res.ok) return
         const buf = await audio().decodeAudioData(await res.arrayBuffer())
         samples.set(cue, buf)

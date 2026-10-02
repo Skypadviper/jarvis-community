@@ -20,8 +20,8 @@ import { ROLES, useCrew, type Role, type RoleId } from '../agents/crew'
  * store imperatively; React only mounts things once.
  */
 
-const AGENT_URL = '/models/agent.glb'
-const STATION_URL = '/models/workstation.glb'
+const AGENT_URL = `${import.meta.env.BASE_URL}models/agent.glb`
+const STATION_URL = `${import.meta.env.BASE_URL}models/workstation.glb`
 
 /** Desks on an arc behind the hub, screens facing the camera. */
 const DESK_R = 5

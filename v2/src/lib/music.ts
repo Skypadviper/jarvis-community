@@ -83,7 +83,7 @@ function track(cue: Cue): Track | null {
   if (!enabled || missing.has(cue)) return null
   let t = tracks.get(cue)
   if (!t) {
-    const el = new Audio(`/audio/${cue}.mp3`)
+    const el = new Audio(`${import.meta.env.BASE_URL}audio/${cue}.mp3`)
     el.preload = 'auto'
     // Only the work cue repeats. It has to, because it covers an operation of
     // unknown length; the two power-up cues are events with an end.
