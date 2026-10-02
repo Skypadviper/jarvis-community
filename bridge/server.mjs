@@ -1131,6 +1131,8 @@ wss.on('connection', (socket) => {
    * listener over there has already heard.
    */
   let answering = null
+  /** When the current question arrived, for the timing in the log. */
+  let askedAt = 0
   const sendTurn = (msg) => send({ ...msg, ask: answering })
 
   /**
@@ -1391,6 +1393,11 @@ wss.on('connection', (socket) => {
             // nothing to say — the HUD stops spinning and JARVIS stands there
             // silent. Say what happened instead.
             if (msg.subtype === 'success') {
+              const secs = askedAt ? ((Date.now() - askedAt) / 1000).toFixed(1) : '?'
+              console.log(
+                `[jarvis] answered in ${secs}s: "${String(msg.result ?? '').slice(0, 120)}"` +
+                  (msg.result ? '' : ' (empty — nothing to say)'),
+              )
               sendTurn({
                 type: 'done',
                 text: msg.result ?? '',
@@ -1474,6 +1481,10 @@ wss.on('connection', (socket) => {
        */
       const text = msg.text
       const id = typeof msg.id === 'string' ? msg.id : null
+      // Said out loud in the terminal so "he heard me but did nothing" can be
+      // told apart from "the question never left the page".
+      console.log(`[jarvis] asked: "${text.slice(0, 120)}"`)
+      askedAt = Date.now()
       void settling.then(() => {
         answering = id
         if (deliver) {
@@ -1496,6 +1507,7 @@ wss.on('connection', (socket) => {
     }
 
     if (msg.type === 'interrupt') {
+      console.log('[jarvis] interrupted by the page — the answer in progress was dropped')
       // Held so the next question can wait for it rather than racing it.
       const stopped = turnFinished()
       settling = Promise.resolve(session.interrupt?.())

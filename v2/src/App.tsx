@@ -189,6 +189,17 @@ export default function App() {
 
       if (stale()) return
 
+      // Never go back to listening as though nothing was asked. A turn that
+      // comes back with no words at all used to look exactly like JARVIS
+      // ignoring you; say so, and leave the reason on screen.
+      if (!text.trim() && !started) {
+        console.warn('[jarvis] the brain returned no answer for:', said)
+        store
+          .getState()
+          .setError('No answer came back for that. Check the terminal for a line starting [jarvis].')
+        spk.say("I'm afraid I came back empty-handed on that one, sir.")
+      }
+
       // The bridge keeps conversation state in its own session, so history is
       // only threaded through on the direct path.
       if (!usingBridge) {
