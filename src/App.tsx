@@ -267,10 +267,20 @@ export default function App() {
    * Someone started talking. This is the whole point of the rewrite: he stops,
    * immediately, whatever he was doing.
    */
-  const onSpeechStart = () => {
-    clearIdle()
+  const onSpeechStart = (force = false) => {
     const phase = store.getState().phase
     if (phase === 'offline' || phase === 'boot' || phase === 'dormant') return
+
+    /*
+     * While he is working and has not started talking, a sound is not enough.
+     * Cutting off on the onset meant any noise in a long tool turn (a cough, a
+     * fan, his own "working on it" coming back through the speakers) threw the
+     * answer away and dropped him back to listening with nothing said. Here he
+     * waits for words instead: onUtterance interrupts if real ones arrive, and
+     * noise or his own echo never gets that far. Space still forces it.
+     */
+    if (!force && (phase === 'thinking' || phase === 'tooling')) return
+    clearIdle()
 
     const wasBusy =
       phase === 'thinking' || phase === 'tooling' || phase === 'speaking'
@@ -292,18 +302,25 @@ export default function App() {
   const onUtterance = (text: string) => {
     const phase = store.getState().phase
     if (phase === 'offline' || phase === 'boot' || phase === 'dormant') return
+    const working = phase === 'thinking' || phase === 'tooling' || phase === 'speaking'
 
     // People keep using his name as a vocative once they're already talking to
     // him. Strip it rather than sending "jarvis" to the model as a question.
+    // Mid-answer, a bare name is not a new question either, so leave the
+    // answer alone rather than abandon it for nothing.
     if (BARE_NAME.test(text)) {
-      listen(AWAIT_SPEECH_MS)
+      if (!working) listen(AWAIT_SPEECH_MS)
       return
     }
     const said = text.replace(LEADING_NAME, '').trim()
     if (!said) {
-      listen(AWAIT_SPEECH_MS)
+      if (!working) listen(AWAIT_SPEECH_MS)
       return
     }
+
+    // Real words while he is still working: this is the interruption that
+    // onSpeechStart deliberately did not make on the sound alone.
+    if (working) onSpeechStart(true)
 
     void respond(said)
   }
@@ -518,7 +535,7 @@ export default function App() {
     voice.current = await startVoice({
       mode,
       onWake,
-      onSpeechStart,
+      onSpeechStart: () => onSpeechStart(),
       onPartial,
       onUtterance,
       onError: onVoiceError,
@@ -674,7 +691,7 @@ export default function App() {
         phase === 'tooling' ||
         phase === 'speaking'
       ) {
-        onSpeechStart()
+        onSpeechStart(true)
         listen(AWAIT_SPEECH_MS)
       } else {
         onWake('')
