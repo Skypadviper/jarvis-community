@@ -37,6 +37,7 @@ from mathutils import Vector
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import build_agents as base  # noqa: E402  (reuse its helpers)
+import guns  # noqa: E402  (Quaternius Ultimate Gun Pack loadouts)
 import retarget_ual  # noqa: E402  (real motion from the Universal Animation Library)
 
 ROOT = os.path.dirname(HERE)
@@ -255,6 +256,7 @@ def build(hs, ls):
         bake(obj)
     arms_down(rig)
     accessories(rig, body)
+    guns.arm(rig)
     return rig
 
 

@@ -23,6 +23,8 @@ import { Brain, burstBrain, burstState } from './Brain'
 
 const AGENT_URL = `${import.meta.env.BASE_URL}models/agent.glb`
 const STATION_URL = `${import.meta.env.BASE_URL}models/workstation.glb`
+/** Each role's long gun propped on the desk, for while its agent sits (blender/guns.py). */
+const GUNS_URL = `${import.meta.env.BASE_URL}models/guns.glb`
 const LAB_URL = `${import.meta.env.BASE_URL}models/lab.glb`
 
 /** Desks on an arc behind the hub, screens facing the camera. */
@@ -103,6 +105,10 @@ type Agent = {
   yaw: number
   screen: Screen
   glow: THREE.MeshStandardMaterial[]
+  /** The long gun slung on the back; a chair back would cut through it. */
+  backGun: THREE.Object3D | null
+  /** The same gun propped against the desk, shown while seated. */
+  rack: THREE.Object3D | null
 }
 
 function play(a: Agent, clip: string, fade = 0.35) {
@@ -235,6 +241,7 @@ function drawScreen(s: Screen, role: Role, task: string | null, t: number) {
 function Crew() {
   const agentGltf = useGLTF(AGENT_URL)
   const stationGltf = useGLTF(STATION_URL)
+  const gunsGltf = useGLTF(GUNS_URL)
   const group = useRef<THREE.Group>(null)
 
   const agents = useMemo<Agent[]>(() => {
@@ -275,6 +282,15 @@ function Crew() {
         })
         m.material = Array.isArray(m.material) ? mats : mats[0]
       })
+      // agent.glb carries every role's loadout (Gun_<i> on the back,
+      // Sidearm_<i> on the thigh); each agent keeps only its own.
+      let backGun: THREE.Object3D | null = null
+      body.traverse((o) => {
+        const m = /^(Gun|Sidearm)_(\d+)$/.exec(o.name)
+        if (!m) return
+        o.visible = Number(m[2]) === index
+        if (o.visible && m[1] === 'Gun') backGun = o
+      })
       root.add(body)
       const mixer = new THREE.AnimationMixer(body)
       const actions: Record<string, THREE.AnimationAction> = {}
@@ -298,6 +314,8 @@ function Crew() {
         yaw,
         screen: makeScreen(),
         glow,
+        backGun,
+        rack: null,
       }
       actions.Idle.play()
       // Out of step with each other, or six agents breathe in unison.
@@ -321,10 +339,20 @@ function Crew() {
         })
         const a = agents[i]
         g.add(a.screen.mesh)
+        const rack = gunsGltf.scene.getObjectByName(`Rack_${i}`)?.clone()
+        if (rack) {
+          rack.traverse((o) => {
+            o.castShadow = true
+            o.receiveShadow = true
+          })
+          rack.visible = false
+          g.add(rack)
+          a.rack = rack
+        }
         drawScreen(a.screen, role, null, 0)
         return g
       }),
-    [stationGltf, agents],
+    [stationGltf, gunsGltf, agents],
   )
 
   useEffect(
@@ -435,6 +463,8 @@ function Crew() {
 
       // Brighter while working; selected agents pulse.
       const busy = a.mode === 'working' || a.mode === 'sitting'
+      if (a.backGun) a.backGun.visible = !busy || !a.rack
+      if (a.rack) a.rack.visible = busy
       const sel = crew.selected === a.role.id
       const glow = (busy ? 7 : 3.5) + (sel ? 2.5 * (0.5 + 0.5 * Math.sin(t * 5)) : 0)
       for (const m of a.glow) m.emissiveIntensity += (glow - m.emissiveIntensity) * Math.min(1, dt * 4)
@@ -662,4 +692,5 @@ export function Office() {
 
 useGLTF.preload(AGENT_URL)
 useGLTF.preload(STATION_URL)
+useGLTF.preload(GUNS_URL)
 useGLTF.preload(LAB_URL)
