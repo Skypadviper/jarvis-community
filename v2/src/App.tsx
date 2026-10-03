@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Scene } from './scene/Scene'
 import { Office } from './scene/Office'
 import { OpsPanel } from './ui/OpsPanel'
-import { useCrew, linkCrew, brainReady } from './agents/crew'
+import { useCrew, linkCrew, brainReady, ROLES } from './agents/crew'
 import { Hud } from './ui/Hud'
 import { Boot } from './ui/Boot'
 import { Ignition } from './ui/Ignition'
@@ -35,6 +35,7 @@ import {
 import { startAnalyser, micLevel } from './lib/audio'
 import { probeCapabilities } from './lib/capabilities'
 import { env } from './config'
+import { burstBrain } from './scene/Brain'
 
 /**
  * The conversation.
@@ -638,6 +639,13 @@ export default function App() {
       if (e.key === 'o' && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault()
         useCrew.getState().toggleView()
+        return
+      }
+
+      // B bursts the brain in a random agent's colour, to preview it on stream.
+      if (e.key === 'b' && !e.repeat && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault()
+        burstBrain(ROLES[Math.floor(Math.random() * ROLES.length)].color)
         return
       }
 

@@ -187,7 +187,272 @@ for side in ("L", "R"):
     ]
 
 
+# -- the human agent -------------------------------------------------------------
+#
+# One continuous body grown from a skeleton graph with Blender's Skin modifier and
+# smoothed with subdivision, so it reads as a person rather than a stack of
+# capsules. Radii are (side-to-side, front-to-back) in metres at each point.
+# The head is sculpted separately so it can have a jaw, nose, brow and ears.
+# Materials: Suit, Skin, Hair, Shoes, and the two the web app tints per agent:
+# Visor (the lenses of a pair of AR glasses) and Glow (lapel pin and smartwatch).
+
+SKELETON = [
+    # name, position, radius, parent
+    ("pelvis", (0, 0, 0.93), (0.165, 0.112), None),
+    ("waist", (0, 0.004, 1.06), (0.135, 0.095), "pelvis"),
+    ("ribs", (0, 0.002, 1.2), (0.155, 0.105), "waist"),
+    ("chest", (0, -0.004, 1.32), (0.172, 0.112), "ribs"),
+    ("yoke", (0, 0.004, 1.41), (0.155, 0.095), "chest"),
+    ("neck_base", (0, 0.012, 1.47), (0.058, 0.058), "yoke"),
+    ("neck_top", (0, 0.008, 1.56), (0.05, 0.052), "neck_base"),
+]
+for _side, _s in (("L", 1), ("R", -1)):
+    SKELETON += [
+        (f"clavicle.{_side}", (0.1 * _s, 0.004, 1.43), (0.062, 0.062), "yoke"),
+        (f"shoulder.{_side}", (0.195 * _s, 0.0, 1.41), (0.058, 0.06), f"clavicle.{_side}"),
+        (f"bicep.{_side}", (0.225 * _s, 0.004, 1.28), (0.047, 0.05), f"shoulder.{_side}"),
+        (f"elbow.{_side}", (0.25 * _s, 0.01, 1.14), (0.037, 0.039), f"bicep.{_side}"),
+        (f"forearm.{_side}", (0.258 * _s, 0.004, 1.03), (0.042, 0.04), f"elbow.{_side}"),
+        (f"wrist.{_side}", (0.268 * _s, 0.0, 0.89), (0.026, 0.021), f"forearm.{_side}"),
+        (f"palm.{_side}", (0.272 * _s, -0.004, 0.84), (0.04, 0.024), f"wrist.{_side}"),
+        (f"fingers.{_side}", (0.275 * _s, -0.01, 0.78), (0.032, 0.018), f"palm.{_side}"),
+        (f"thumb.{_side}", (0.256 * _s, -0.04, 0.835), (0.015, 0.015), f"palm.{_side}"),
+        (f"hip.{_side}", (0.098 * _s, 0.0, 0.89), (0.088, 0.09), "pelvis"),
+        (f"thigh.{_side}", (0.102 * _s, -0.004, 0.72), (0.074, 0.076), f"hip.{_side}"),
+        (f"knee.{_side}", (0.105 * _s, -0.01, 0.5), (0.05, 0.052), f"thigh.{_side}"),
+        (f"calf.{_side}", (0.105 * _s, 0.008, 0.34), (0.052, 0.058), f"knee.{_side}"),
+        (f"ankle.{_side}", (0.105 * _s, 0.02, 0.1), (0.034, 0.036), f"calf.{_side}"),
+        (f"heel.{_side}", (0.106 * _s, 0.035, 0.045), (0.04, 0.038), f"ankle.{_side}"),
+        (f"toe.{_side}", (0.11 * _s, -0.13, 0.035), (0.042, 0.03), f"heel.{_side}"),
+    ]
+
+
+def skin_body(suit, skin, shoes, trousers, shirt, tie):
+    names = [n for n, *_ in SKELETON]
+    verts = [p for _, p, _, _ in SKELETON]
+    edges = [(names.index(parent), i) for i, (_, _, _, parent) in enumerate(SKELETON) if parent]
+    mesh = bpy.data.meshes.new("Human")
+    mesh.from_pydata(verts, edges, [])
+    obj = bpy.data.objects.new("Human", mesh)
+    bpy.context.collection.objects.link(obj)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+
+    skin_mod = obj.modifiers.new("skin", "SKIN")
+    skin_mod.branch_smoothing = 0.6
+    skin_mod.use_smooth_shade = True
+    layer = mesh.skin_vertices[0].data
+    for i, (_, _, r, _) in enumerate(SKELETON):
+        layer[i].radius = r
+    layer[0].use_root = True
+    sub = obj.modifiers.new("smooth", "SUBSURF")
+    sub.levels = sub.render_levels = 2
+    bpy.ops.object.modifier_apply(modifier="skin")
+    bpy.ops.object.modifier_apply(modifier="smooth")
+
+    # Dress it: shoes below the ankle, skin at the neck and hands, suit elsewhere.
+    for m in (suit, skin, shoes, trousers, shirt, tie):
+        obj.data.materials.append(m)
+    for f in obj.data.polygons:
+        c = f.center
+        front = c.y < -0.04
+        # The open jacket: a V of shirt from the collar down to mid-chest.
+        v_half = (c.z - 1.22) * 0.42
+        if c.z < 0.105:
+            f.material_index = 2  # shoes
+        elif c.z > 1.47 or (abs(c.x) > 0.236 and c.z < 0.905):
+            f.material_index = 1  # skin: neck and hands
+        elif front and 1.2 < c.z <= 1.45 and abs(c.x) < 0.024:
+            f.material_index = 5  # tie
+        elif front and 1.22 < c.z <= 1.47 and abs(c.x) < v_half:
+            f.material_index = 4  # shirt
+        elif c.z < 0.9 and not (abs(c.x) > 0.2):
+            f.material_index = 3  # trousers
+        else:
+            f.material_index = 0  # jacket
+        f.use_smooth = True
+    return obj
+
+
+def sculpt_head(skin, hair, visor):
+    """A head with a jaw, chin, nose, brow and ears; hair over the crown; and a
+    pair of AR glasses whose lenses the web app lights in the agent's colour."""
+    cx, cy, cz = 0.0, 0.006, 1.665
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=48, ring_count=32, radius=1.0, location=(cx, cy, cz))
+    head = bpy.context.active_object
+    head.scale = (0.078, 0.095, 0.112)
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    for v in head.data.vertices:
+        p = v.co  # relative to the head centre
+        # Jaw: narrower towards the chin, the chin brought forward.
+        if p.z < -0.01:
+            k = min(1.0, (-0.01 - p.z) / 0.09)
+            p.x *= 1.0 - 0.35 * k
+            p.y *= 1.0 - 0.18 * k
+            if p.y < 0:
+                p.y -= 0.012 * k
+        # Back of the skull fuller, forehead flatter.
+        if p.y > 0 and p.z > -0.02:
+            p.y *= 1.06
+        # Nose: a ridge down the middle of the face.
+        if p.y < 0:
+            nose = math.exp(-(p.x ** 2) / 0.00025 - ((p.z + 0.012) ** 2) / 0.0012)
+            p.y -= 0.022 * nose
+            # Brow, and eyes set back beneath it.
+            brow = math.exp(-((p.z - 0.022) ** 2) / 0.00015) * (1 - math.exp(-(p.x ** 2) / 0.0002))
+            p.y -= 0.006 * brow
+            for ex in (0.03, -0.03):
+                eye = math.exp(-((p.x - ex) ** 2) / 0.0002 - ((p.z - 0.008) ** 2) / 0.0001)
+                p.y += 0.007 * eye
+    head.data.materials.append(skin)
+    for f in head.data.polygons:
+        f.use_smooth = True
+    sub = head.modifiers.new("smooth", "SUBSURF")
+    sub.levels = sub.render_levels = 1
+    bpy.ops.object.modifier_apply(modifier="smooth")
+    parts = [head]
+
+    # Ears.
+    for s in (1, -1):
+        parts.append(ellipsoid((0.078 * s, 0.012, cz + 0.005), (0.012, 0.022, 0.032), skin, segments=16, rings=10))
+
+    # Hair: a cap over the crown and down the back, short at the sides.
+    bpy.ops.mesh.primitive_uv_sphere_add(segments=48, ring_count=32, radius=1.0, location=(cx, cy + 0.006, cz + 0.008))
+    cap = bpy.context.active_object
+    cap.scale = (0.084, 0.102, 0.118)
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    for v in cap.data.vertices:
+        p = v.co
+        # Keep the crown and the back; cut away the face, ears and neck.
+        hairline = 0.03 if p.y < 0 else (-0.045 if p.y > 0.04 else 0.0)
+        v.select = p.z < hairline
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.delete(type="VERT")
+    bpy.ops.object.mode_set(mode="OBJECT")
+    finish(cap, hair)
+    parts.append(cap)
+
+    # AR glasses: a slim frame and two lenses.
+    frame = material("Frame", (0.02, 0.02, 0.025), metallic=0.8, rough=0.3)
+    for s in (1, -1):
+        parts.append(ellipsoid((0.03 * s, cy - 0.094, cz + 0.008), (0.022, 0.004, 0.014), visor, segments=16, rings=8))
+        parts.append(limb((0.052 * s, cy - 0.09, cz + 0.012), (0.078 * s, cy - 0.02, cz + 0.016), 0.003, frame, None))
+    parts.append(limb((-0.008, cy - 0.097, cz + 0.012), (0.008, cy - 0.097, cz + 0.012), 0.003, frame, None))
+    return parts
+
+
+def bone_distance(p, a, b):
+    ab = b - a
+    t = max(0.0, min(1.0, (p - a).dot(ab) / ab.length_squared))
+    return (a + ab * t - p).length
+
+
+# Which bone moves each limb of the skin skeleton, keyed by the child point.
+SKIN_BONE = {
+    "waist": "hips", "ribs": "spine", "chest": "chest", "yoke": "chest",
+    "neck_base": "neck", "neck_top": "neck",
+}
+for _side in ("L", "R"):
+    SKIN_BONE.update({
+        f"clavicle.{_side}": "chest", f"shoulder.{_side}": f"upperarm.{_side}",
+        f"bicep.{_side}": f"upperarm.{_side}", f"elbow.{_side}": f"upperarm.{_side}",
+        f"forearm.{_side}": f"forearm.{_side}", f"wrist.{_side}": f"forearm.{_side}",
+        f"palm.{_side}": f"hand.{_side}", f"fingers.{_side}": f"hand.{_side}",
+        f"thumb.{_side}": f"hand.{_side}",
+        f"hip.{_side}": "hips", f"thigh.{_side}": f"thigh.{_side}", f"knee.{_side}": f"thigh.{_side}",
+        f"calf.{_side}": f"shin.{_side}", f"ankle.{_side}": f"shin.{_side}",
+        f"heel.{_side}": f"foot.{_side}", f"toe.{_side}": f"foot.{_side}",
+    })
+
+
+def weigh(obj, rigid=None):
+    """Skin weights from the skin skeleton itself.
+
+    Every surface point grew out of one limb of SKELETON, at about that limb's
+    radius. So distance is measured in limb radii, not metres: a point on the
+    side of the chest is one chest-radius from the chest and well over one
+    arm-radius from the arm, which is what keeps a raised arm from dragging the
+    ribs with it. Near a joint the two nearest limbs share the point.
+    Anything passed as `rigid` follows that one bone outright.
+    """
+    groups = {name: obj.vertex_groups.new(name=name) for name, *_ in BONES}
+    if rigid:
+        groups[rigid].add([v.index for v in obj.data.vertices], 1.0, "REPLACE")
+        return
+    nodes = {n: (Vector(p), sum(r) / 2) for n, p, r, _ in SKELETON}
+    limbs = []
+    for name, _, _, parent in SKELETON:
+        if parent:
+            (a, ra), (b, rb) = nodes[parent], nodes[name]
+            limbs.append((SKIN_BONE[name], a, b, ra, rb))
+    for v in obj.data.vertices:
+        scored = []
+        for bone, a, b, ra, rb in limbs:
+            ab = b - a
+            t = max(0.0, min(1.0, (v.co - a).dot(ab) / ab.length_squared))
+            r = ra + (rb - ra) * t
+            scored.append(((a + ab * t - v.co).length / r, bone))
+        scored.sort()
+        d0, b0 = scored[0]
+        other = next(((d, b) for d, b in scored[1:] if b != b0), None)
+        w1 = 0.0
+        if other:
+            w1 = max(0.0, 1.0 - (other[0] - d0) / 0.35) * 0.5
+        groups[b0].add([v.index], 1.0 - w1, "REPLACE")
+        if w1 > 0:
+            groups[other[1]].add([v.index], w1, "ADD")
+
+
 def build_agent():
+    suit = material("Suit", (0.035, 0.045, 0.06), metallic=0.05, rough=0.62)
+    skin = material("Skin", (0.62, 0.43, 0.33), rough=0.48)
+    hair = material("Hair", (0.045, 0.032, 0.025), rough=0.7)
+    shoes = material("Shoes", (0.02, 0.02, 0.022), metallic=0.2, rough=0.35)
+    trousers = material("Trousers", (0.022, 0.026, 0.034), rough=0.7)
+    shirt = material("Shirt", (0.82, 0.84, 0.86), rough=0.55)
+    tie = material("Tie", (0.03, 0.05, 0.11), rough=0.4)
+    glow = material("Glow", (0.0, 0.9, 1.0), emission=(0.0, 0.9, 1.0), strength=6.0)
+    # Lenses with a faint heads-up glow, not lit-up eyes.
+    visor = material("Visor", (0.02, 0.06, 0.08), emission=(0.0, 0.85, 1.0), strength=0.35, metallic=0.4, rough=0.05)
+
+    body = skin_body(suit, skin, shoes, trousers, shirt, tie)
+    weigh(body)
+
+    head_parts = sculpt_head(skin, hair, visor)
+    head = join(head_parts, "Head")
+    weigh(head, rigid="head")
+
+    # Lapel pin on the left chest and a smartwatch on the left wrist.
+    pin = ellipsoid((0.085, -0.108, 1.36), (0.012, 0.005, 0.012), glow, "chest", segments=12, rings=8)
+    watch = ring(J["wrist.L"], 0.03, 0.007, glow, "forearm.L")
+
+    mesh = join([body, head, pin, watch], "Agent")
+
+    # Skeleton.
+    bpy.ops.object.armature_add(enter_editmode=True, location=(0, 0, 0))
+    rig = bpy.context.object
+    rig.name = "AgentRig"
+    rig.data.name = "AgentRig"
+    eb = rig.data.edit_bones
+    eb.remove(eb[0])
+    for name, h, t, parent in BONES:
+        b = eb.new(name)
+        b.head, b.tail = J[h], J[t]
+        if parent:
+            b.parent = eb[parent]
+            b.use_connect = False
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    mesh.parent = rig
+    mod = mesh.modifiers.new("rig", "ARMATURE")
+    mod.object = rig
+    return rig
+
+
+def build_robot():
     # Body is the one material the web app recolours per agent; Glow is the
     # cyan circuitry; Visor is the face plate. Names are the contract.
     body = material("Body", (0.06, 0.09, 0.13), metallic=0.7, rough=0.32)
@@ -279,6 +544,15 @@ def key(rig, frame):
         pb.keyframe_insert("location", frame=frame)
 
 
+def fcurves(act):
+    """An action's F-curves. Blender 5 moved them into layers, strips and
+    channel bags; older builds keep them on the action itself."""
+    if hasattr(act, "fcurves"):
+        return list(act.fcurves)
+    return [fc for layer in act.layers for strip in layer.strips
+            for bag in strip.channelbags for fc in bag.fcurves]
+
+
 def action(rig, name, frames, pose):
     """Key `pose(rig, phase)` across `frames`, phase running 0..1 and looping."""
     rig.animation_data_create()
@@ -292,7 +566,7 @@ def action(rig, name, frames, pose):
         pose(rig, (i / steps) % 1.0)
         key(rig, f)
     # Make the loop seam exact rather than "probably close".
-    for fc in act.fcurves:
+    for fc in fcurves(act):
         fc.modifiers.new("CYCLES")
     act.frame_range = (1, frames + 1)
     return act

@@ -5,7 +5,8 @@ import { EffectComposer, Bloom, Vignette } from '@react-three/postprocessing'
 import * as THREE from 'three'
 import { clone as cloneSkinned } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { useStore, accentFor } from '../store'
-import { ROLES, useCrew, type Role, type RoleId } from '../agents/crew'
+import { ROLES, ROLE, useCrew, type Role, type RoleId } from '../agents/crew'
+import { Brain, burstBrain, burstState } from './Brain'
 
 /**
  * The ops floor: JARVIS's crew at their desks.
@@ -22,6 +23,7 @@ import { ROLES, useCrew, type Role, type RoleId } from '../agents/crew'
 
 const AGENT_URL = `${import.meta.env.BASE_URL}models/agent.glb`
 const STATION_URL = `${import.meta.env.BASE_URL}models/workstation.glb`
+const LAB_URL = `${import.meta.env.BASE_URL}models/lab.glb`
 
 /** Desks on an arc behind the hub, screens facing the camera. */
 const DESK_R = 5
@@ -248,10 +250,26 @@ function Crew() {
         m.userData.role = role.id
         const mats = (Array.isArray(m.material) ? m.material : [m.material]).map((mat) => {
           const c = (mat as THREE.MeshStandardMaterial).clone()
+          // MakeHuman assets arrive marked as blended. Skin, suit and shoes are
+          // solid; hair, brows and lashes are cut-outs. Left blended, the head
+          // can draw over the hair and the agents come out bald.
+          if (c.transparent && c.map) {
+            const strands = /short|hair|brow|lash/i.test(c.name)
+            c.transparent = false
+            c.depthWrite = true
+            c.alphaTest = strands ? 0.35 : 0
+            if (strands) c.side = THREE.DoubleSide
+          }
           if (c.name === 'Glow' || c.name === 'Visor') {
             c.emissive.copy(tint)
             c.color.copy(tint).multiplyScalar(0.4)
-            glow.push(c)
+            // The lenses are glasses, not eyes: a faint heads-up tint only.
+            if (c.name === 'Visor') {
+              c.emissiveIntensity = 0.12
+              c.color.setRGB(0.02, 0.04, 0.05)
+            } else {
+              glow.push(c)
+            }
           }
           return c
         })
@@ -261,7 +279,7 @@ function Crew() {
       const mixer = new THREE.AnimationMixer(body)
       const actions: Record<string, THREE.AnimationAction> = {}
       for (const clip of agentGltf.animations) actions[clip.name] = mixer.clipAction(clip)
-      actions.Walk?.setEffectiveTimeScale(1.35)
+      actions.Walk?.setEffectiveTimeScale(WALK_SPEED / 0.93) // 0.93 m/s: the UAL stride speed (agent.walk.json)
       const start = onRing(LOUNGE_R, loungeAngle(index))
       root.position.copy(start)
       const yaw = Math.atan2(-start.x * 0.3, 1)
@@ -483,31 +501,25 @@ function Nameplate({ agent }: { agent: Agent }) {
 
 /** JARVIS himself: the hub at the centre of the floor, in the phase colour. */
 function Hub() {
-  const ring = useRef<THREE.Mesh>(null)
-  const ring2 = useRef<THREE.Mesh>(null)
-  const core = useRef<THREE.Mesh>(null)
   const light = useRef<THREE.PointLight>(null)
   const color = useMemo(() => new THREE.Color('#12908f'), [])
   const target = useMemo(() => new THREE.Color(), [])
-  const mats = useMemo(
-    () => ({
-      ring: new THREE.MeshBasicMaterial({ color: '#00e5ff', toneMapped: false, transparent: true, opacity: 0.9 }),
-      core: new THREE.MeshBasicMaterial({ color: '#00e5ff', toneMapped: false, transparent: true, opacity: 0.55 }),
-      base: new THREE.MeshStandardMaterial({ color: '#06121c', metalness: 0.8, roughness: 0.3 }),
-    }),
+  // A job finishing bursts the brain, in the colour of the agent who did it.
+  useEffect(
+    () =>
+      useCrew.subscribe((s, prev) => {
+        for (const id of Object.keys(prev.tasks) as RoleId[]) {
+          if (prev.tasks[id] && !s.tasks[id]) burstBrain(ROLE[id].color)
+        }
+      }),
     [],
   )
-  useFrame((state, dt) => {
+
+  useFrame((_, dt) => {
     const { phase, level, ui } = useStore.getState()
     target.set(accentFor(phase, ui))
     color.lerp(target, Math.min(1, dt * 3))
-    mats.ring.color.copy(color)
-    mats.core.color.copy(color)
-    const t = state.clock.elapsedTime
     const busy = phase === 'thinking' || phase === 'tooling' || phase === 'speaking'
-    if (ring.current) ring.current.rotation.z += dt * (busy ? 2.4 : 0.5)
-    if (ring2.current) ring2.current.rotation.z -= dt * (busy ? 1.6 : 0.3)
-    if (core.current) core.current.scale.setScalar(0.32 + level * 0.18 + 0.02 * Math.sin(t * 2))
     if (light.current) {
       light.current.color.copy(color)
       light.current.intensity = 6 + level * 10 + (busy ? 4 : 0)
@@ -515,46 +527,87 @@ function Hub() {
   })
   return (
     <group>
-      <mesh material={mats.base} position={[0, 0.15, 0]} receiveShadow>
-        <cylinderGeometry args={[0.9, 1.05, 0.3, 48]} />
-      </mesh>
-      <group position={[0, 1.55, 0]}>
-        <mesh ref={core} material={mats.core}>
-          <icosahedronGeometry args={[1, 3]} />
-        </mesh>
-        <mesh ref={ring} material={mats.ring} rotation={[Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[0.62, 0.012, 8, 96]} />
-        </mesh>
-        <mesh ref={ring2} material={mats.ring} rotation={[Math.PI / 2.4, 0.3, 0]}>
-          <torusGeometry args={[0.78, 0.008, 8, 96]} />
-        </mesh>
+      <group position={[0, 2.05, 0]}>
+        <Brain />
       </group>
-      <pointLight ref={light} position={[0, 1.6, 0]} distance={9} decay={1.6} />
+      <pointLight ref={light} position={[0, 2.05, 0]} distance={9} decay={1.6} />
     </group>
   )
 }
 
+/**
+ * The hall: Quaternius's Modular Sci-Fi MegaKit assembled by blender/build_lab.py,
+ * with the containment capsule that holds the brain. The glass is made properly
+ * see-through here, the capsule's light rings follow JARVIS's colour, and the
+ * whole capsule flashes in an agent's colour when the brain bursts.
+ */
+function Lab() {
+  const gltf = useGLTF(LAB_URL)
+  const glows = useRef<THREE.MeshStandardMaterial[]>([])
+  const glass = useMemo(
+    () =>
+      new THREE.MeshStandardMaterial({
+        color: '#9fe8ff',
+        emissive: '#00e5ff',
+        emissiveIntensity: 0.05,
+        transparent: true,
+        opacity: 0.1,
+        roughness: 0.05,
+        metalness: 0.1,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      }),
+    [],
+  )
+  const scene = useMemo(() => {
+    const root = gltf.scene.clone(true)
+    glows.current = []
+    root.traverse((o) => {
+      const m = o as THREE.Mesh
+      if (!m.isMesh) return
+      m.receiveShadow = true
+      const mat = m.material as THREE.MeshStandardMaterial
+      if (mat.name === 'CapsuleGlass') {
+        m.material = glass
+        m.renderOrder = 2
+      } else if (mat.name === 'CapsuleGlow') {
+        const c = mat.clone()
+        c.toneMapped = false
+        glows.current.push(c)
+        m.material = c
+      }
+    })
+    return root
+  }, [gltf, glass])
+  const color = useMemo(() => new THREE.Color(), [])
+  useFrame(() => {
+    const { phase, ui } = useStore.getState()
+    color.set(accentFor(phase, ui))
+    const burst = burstState()
+    for (const g of glows.current) {
+      g.emissive.copy(color).lerp(burst.color, burst.k)
+      g.emissiveIntensity = 4 + burst.k * 10
+    }
+    glass.emissive.copy(burst.color)
+    glass.emissiveIntensity = 0.05 + burst.k * 0.9
+    glass.opacity = 0.1 + burst.k * 0.2
+  })
+  return <primitive object={scene} />
+}
+
 function Floor() {
-  const grid = useMemo(() => {
-    const g = new THREE.GridHelper(30, 60, '#0b5560', '#06303a')
-    const m = g.material as THREE.LineBasicMaterial
-    m.transparent = true
-    m.opacity = 0.55
-    g.position.y = 0.002
-    return g
-  }, [])
   return (
     <group>
-      <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow onClick={() => useCrew.getState().select(null)}>
-        <circleGeometry args={[15, 64]} />
-        <meshStandardMaterial color="#02080e" metalness={0.6} roughness={0.45} />
+      {/* An invisible floor to click on, so clicking empty space deselects. */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]} onClick={() => useCrew.getState().select(null)}>
+        <circleGeometry args={[11, 48]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
-      <primitive object={grid} />
       {/* Walkway and lounge rings, painted on the floor. */}
       {[AISLE_R, LOUNGE_R].map((r) => (
-        <mesh key={r} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.004, 0]}>
+        <mesh key={r} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.02, 0]}>
           <ringGeometry args={[r - 0.015, r + 0.015, 128]} />
-          <meshBasicMaterial color="#00e5ff" transparent opacity={0.25} toneMapped={false} />
+          <meshBasicMaterial color="#00e5ff" transparent opacity={0.3} toneMapped={false} />
         </mesh>
       ))}
     </group>
@@ -571,7 +624,7 @@ export function Office() {
       gl={{ antialias: true }}
     >
       <color attach="background" args={['#01060c']} />
-      <fog attach="fog" args={['#01060c', 12, 26]} />
+      <fog attach="fog" args={['#01060c', 18, 42]} />
       <hemisphereLight args={['#9fdcff', '#02080e', 0.9]} />
       <directionalLight
         position={[4, 9, 6]}
@@ -583,6 +636,9 @@ export function Office() {
         shadow-camera-top={8}
         shadow-camera-bottom={-8}
       />
+      <Suspense fallback={null}>
+        <Lab />
+      </Suspense>
       <Floor />
       <Hub />
       <Suspense fallback={null}>
@@ -606,3 +662,4 @@ export function Office() {
 
 useGLTF.preload(AGENT_URL)
 useGLTF.preload(STATION_URL)
+useGLTF.preload(LAB_URL)

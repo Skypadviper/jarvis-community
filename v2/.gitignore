@@ -33,3 +33,6 @@ __pycache__
 .env
 .env.*
 !.env.example
+
+# Downloaded art packs (licences inside); only the built GLBs ship.
+blender/assets/
