@@ -265,7 +265,8 @@ def main():
     base.reset()
     hs, ls = mpfb()
     rig = build(hs, ls)
-    speed = retarget_ual.animate(rig)
+    speed, (gun_pose, hand_pose) = retarget_ual.animate(rig, guns.fore_offset())
+    guns.hold(rig, gun_pose, hand_pose)
     with open(os.path.join(ROOT, 'public', 'models', 'agent.walk.json'), 'w') as f:
         f.write(json.dumps({'walkSpeed': round(speed, 3)}))
     rig.animation_data.action = bpy.data.actions["Idle"]
@@ -279,7 +280,8 @@ def main():
     hs, ls = mpfb()
     for i, clip in enumerate(("Idle", "Walk", "Wave")):
         r = build(hs, ls)
-        retarget_ual.animate(r)
+        _, (gun_pose, hand_pose) = retarget_ual.animate(r, guns.fore_offset())
+        guns.hold(r, gun_pose, hand_pose)
         r.location = ((i - 1) * 0.9, 0, 0)
         base.pose_still(r, clip, 8)
     bpy.context.view_layer.update()

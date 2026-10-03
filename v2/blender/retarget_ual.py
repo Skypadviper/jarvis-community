@@ -12,7 +12,8 @@ target bone is first swung onto the source bone's rest direction. That is what
 lets a library idle hang the arms naturally instead of adding its own drop on
 top of an arm that already hangs.
 
-Idle, Walk and Sit are the library's motion capture as is, fingers included.
+Idle, Walk and Sit are the library's motion capture, fingers included; armed,
+Idle and Walk keep its body motion with both hands on a long gun at low ready.
 The library has no typing or waving, so those keep its real sitting and idle
 motion for the body and drive the arms with two-bone IK: hands on the keyboard
 with palms down, the elbows out and back, irregular wrist and finger taps, and
@@ -203,12 +204,15 @@ class Retarget:
             first = self.sample(act_src, start)
             anchor = (first["pelvis"].translation - self.src_hips) * self.scale
         prev = {}
+        self._G = None
         for i in range(n + 1):
             f = start + (i % (end - start + 1) if frames else i)
             pose = self.sample(act_src, min(f, end))
             t = i / n
             world = self.solve(pose, anchor, (lambda b, m, w, t=t: override(self, b, m, w, t)) if override else None)
             self.key(world, 1 + i, prev)
+            if i == 0:
+                self.first = (self._G.copy() if self._G is not None else None, world["hand.R"].copy())
         act.frame_range = (1, n + 1)
         return act
 
@@ -304,9 +308,9 @@ def walking(rt, name, m, world, t):
 WALK_ARM_BACK = 36
 
 
-def waving(rt, name, m, world, t):
-    """Right arm raised, forearm swinging from the elbow, palm forward."""
-    side, s = "R", -1
+def waving(rt, name, m, world, t, side="R"):
+    """One arm raised, forearm swinging from the elbow, palm forward."""
+    s = 1 if side == "L" else -1
     if name == f"upperarm.{side}":
         shoulder = m.translation
         l1, l2 = _lengths(rt, side)
@@ -328,15 +332,115 @@ def waving(rt, name, m, world, t):
     return None
 
 
-def animate(rig):
+# -- carrying the long gun --------------------------------------------------------------
+
+# Low ready, in the agent's rest space (facing -Y, left +X): the firing hand on
+# the grip at the right of the belly, the muzzle down and across to the left.
+CARRY_GRIP = Vector((-0.09, -0.18, 1.12))
+CARRY_DIR = Vector((0.62, -0.55, -0.3))
+# The hands in the gun's own frame (X to the muzzle, Z up through the sights,
+# Y the gun's left; origin at the grip). Firing hand: forearm in line with the
+# bore, palm against the right of the grip. Support hand: under the handguard,
+# palm up, fingers wrapping round to its right side.
+R_HAND_Y = Vector((1, 0, -0.45)).normalized()
+R_PALM = Vector((0, 1, 0))
+R_WRIST = -R_HAND_Y * 0.075 + Vector((0, -0.025, 0))
+L_HAND_Y = Vector((0.3, -1, 0.25)).normalized()
+L_PALM = Vector((0, -0.3, 1)).normalized()
+GRIP_CURL = 55  # degrees per finger joint round the grip and handguard
+
+
+def carry_pose(chest, t):
+    """The gun's world pose (grip at its origin) for this chest pose: it rides
+    with the torso, with a slight sway."""
+    x = CARRY_DIR.normalized()
+    z = Vector((0, 0, 1))
+    z = (z - x * z.dot(x)).normalized()
+    y = z.cross(x)
+    g = Matrix((x, y, z)).transposed().to_4x4()
+    g.translation = CARRY_GRIP
+    g = g @ Matrix.Rotation(math.radians(1.5 * math.sin(2 * math.pi * t)), 4, "Z")
+    return chest, g
+
+
+def carrying(rt, name, m, world, t, sides=("R", "L")):
+    """Both hands on the gun by IK; the gun itself is bound to the right hand
+    (guns.hold), so wherever the hand goes the gun follows."""
+    if name == "chest":
+        follow = m @ rt.rest["chest"].inverted()
+        rt._follow = follow
+        rt._G = follow @ carry_pose(m, t)[1]
+        return None
+    G = getattr(rt, "_G", None)
+    if G is None:
+        return None
+    g = rot(G)
+    for side in sides:
+        s = 1 if side == "L" else -1
+        if side == "R":
+            wrist = G @ R_WRIST
+            hand_y, palm = g @ R_HAND_Y, g @ R_PALM
+            pole = Vector((0.6 * s, 0.4, -0.7))
+        else:
+            fore = rt.fore
+            wrist = G @ (fore - L_HAND_Y * 0.075 - L_PALM * 0.015)
+            hand_y, palm = g @ L_HAND_Y, g @ L_PALM
+            pole = Vector((0.45, 0.1, -0.85))
+        if name == f"upperarm.{side}":
+            shoulder = m.translation
+            l1, l2 = _lengths(rt, side)
+            elbow, w = two_bone(shoulder, wrist, l1, l2, rot(rt._follow) @ pole)
+            rt.reach[side] = max(rt.reach.get(side, 0.0), (wrist - w).length)
+            rt._ik = getattr(rt, "_ik", {})
+            rt._ik[side] = (elbow, w)
+            up = rot(m)
+            r = ((up @ Vector((0, 1, 0))).rotation_difference(elbow - shoulder)).to_matrix() @ up
+            return Matrix.Translation(shoulder) @ r.to_4x4()
+        if name == f"forearm.{side}":
+            elbow, w = rt._ik[side]
+            r = frame_from(w - elbow, palm, Vector((0, 1, 0)), rt.palm[name])
+            return Matrix.Translation(m.translation) @ r.to_4x4()
+        if name == f"hand.{side}":
+            r = frame_from(hand_y, palm, Vector((0, 1, 0)), rt.palm[name])
+            return Matrix.Translation(m.translation) @ r.to_4x4()
+        for f in ("index", "middle", "ring", "pinky", "thumb"):
+            for i in (1, 2, 3):
+                if name == f"{f}_0{i}_{side.lower()}":
+                    curl = GRIP_CURL * (0.45 if f == "thumb" else 1.0)
+                    parent = world[rt.rig.data.bones[name].parent.name]
+                    base = parent @ rt.rel[name]
+                    r = rot(base) @ axis_rot(Vector((1, 0, 0)), curl)
+                    return Matrix.Translation(base.translation) @ r.to_4x4()
+    return None
+
+
+def waving_armed(rt, name, m, world, t):
+    """The left arm waves; the right hand keeps hold of the gun."""
+    r = carrying(rt, name, m, world, t, sides=("R",))
+    if r is not None:
+        return r
+    return waving(rt, name, m, world, t, side="L")
+
+
+def animate(rig, fore=None):
+    """Adds the clips. With `fore` (the support hand's point relative to the
+    gun's grip, from guns.fore_offset()), Idle, Walk and Wave carry a long gun
+    and this returns (walk speed, (gun pose, right-hand pose) at Idle's first
+    frame), which guns.hold() binds the guns with."""
     rt = Retarget(rig)
     speed = rt.walk_speed()
-    rt.clip("Idle", "Idle_Loop")
-    rt.clip("Walk", "Walk_Loop", override=walking)
+    armed = fore is not None
+    rt.fore = fore
+    rt.reach = {}
+    rt.clip("Idle", "Idle_Loop", override=carrying if armed else None)
+    ref = rt.first
+    rt.clip("Walk", "Walk_Loop", override=carrying if armed else walking)
     rt.clip("Sit", "Sitting_Idle_Loop", anchored=True)
     rt.clip("Type", "Sitting_Idle_Loop", anchored=True, override=typing)
-    rt.clip("Wave", "Idle_Loop", frames=30, override=waving)
+    rt.clip("Wave", "Idle_Loop", frames=30, override=waving_armed if armed else waving)
     rt.cleanup()
     rig.animation_data.action = bpy.data.actions["Idle"]
-    print(f"[ual] retargeted Idle, Walk, Sit, Type, Wave; walk speed {speed:.2f} m/s")
-    return speed
+    print(f"[ual] retargeted Idle, Walk, Sit, Type, Wave{' carrying' if armed else ''}; walk speed {speed:.2f} m/s")
+    if armed:
+        print("[ual] carry: hands short of the gun by " + ", ".join(f"{k} {v * 100:.1f} cm" for k, v in sorted(rt.reach.items())))
+    return (speed, ref) if armed else speed

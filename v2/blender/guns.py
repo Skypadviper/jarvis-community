@@ -3,12 +3,12 @@ Arms the agents with Quaternius' CC0 Ultimate Gun Pack.
 
     blender -b -P blender/guns.py            # public/models/guns.glb (desk racks)
 
-build_humans.py calls arm(rig) to add, per role, a long gun slung across the
-back (Gun_<i>, rigid on the chest) and a pistol in a thigh holster
-(Sidearm_<i>, rigid on the right thigh). The web app shows only the agent's own
-pair. A chair back would cut through the slung gun, so while an agent is seated
-the app hides it and shows the same gun propped against the desk instead
-(Rack_<i> in guns.glb, in workstation coordinates).
+build_humans.py calls arm(rig) to holster a pistol on every agent's right thigh
+(Sidearm_<i>), then, once the clips exist, hold() to put each role's long gun
+in the right hand (Gun_<i>), where retarget_ual's carry holds it two-handed at
+low ready. The web app shows only the agent's own pair. When an agent sits down
+to work the app hides the gun in its hands and shows the same gun propped
+against the desk (Rack_<i> in guns.glb, in workstation coordinates).
 
 Needs the pack (https://quaternius.com/packs/ultimategun.html) with its FBX
 folder unpacked into blender/assets/guns/FBX.
@@ -38,7 +38,12 @@ LOADOUT = [
     (("AssaultRifle_4", 0.9), ("Pistol_4", 0.19)),
     (("AssaultRifle2_1", 0.88), ("Pistol_5", 0.19)),
 ]
-SLING_TILT = 22  # degrees from vertical; muzzle up over the right shoulder
+# Where the pistol grip (or a shotgun's wrist) sits, as a fraction of the
+# length from the butt; read off each gun's underside profile.
+GRIP = {"SniperRifle_1": 0.22, "Bullpup_1": 0.42, "SubmachineGun_5": 0.34,
+        "Shotgun_1": 0.26, "AssaultRifle_4": 0.26, "AssaultRifle2_1": 0.26}
+# How far ahead of the grip the support hand holds the handguard.
+FORE_REACH = 0.23
 
 
 def load(name, length):
@@ -126,69 +131,49 @@ def surface(rig):
     return [o.matrix_world @ v.co for o in rig.children_recursive if o.type == "MESH" and not o.name.startswith(("Gun_", "Sidearm_", "Accessories")) for v in o.data.vertices]
 
 
-def back_gun(rig, pts, i, name, length):
+def gripped(name, length):
+    """load(), then moved so the firing hand's grip is the origin. Returns the
+    gun and the support hand's point under the handguard, both in that frame."""
     gun, size = load(name, length)
-    chest = rig.data.bones["chest"].head_local
-    t = math.radians(SLING_TILT)
-    d = sling_dir()
-    c = Vector((0, 0, chest.z - 0.04))
-    # Rest it on the back along its whole length: the furthest-back point of
-    # the body within its footprint, plus half its thickness.
-    foot = [p for p in pts if abs(p.x) < 0.17 and abs((p - c).dot(d)) < length / 2 and (Vector((p.x, 0, p.z)) - c - d * (p - c).dot(d)).length < 0.07]
-    c.y = max(p.y for p in foot) + size.y / 2 + 0.012
-    place(gun, d, Vector((0, 1, 0)), c)
-    # Centre the silhouette (magazine included) on the spine, clear of both arms.
-    xs = [v.co.x for v in gun.data.vertices]
-    gun.data.transform(Matrix.Translation((-(min(xs) + max(xs)) / 2, 0, 0)))
-    rigid(gun, rig, "chest")
-    gun.name = gun.data.name = f"Gun_{i}"
-    return gun, c.y - size.y / 2
+    vs = [v.co for v in gun.data.vertices]
+    lo = min(v.x for v in vs)
+
+    def column(x, w=0.02):
+        zs = [v.z for v in vs if abs(v.x - x) < w]
+        return (min(zs), max(zs)) if zs else (0.0, 0.0)
+
+    gx = lo + GRIP[name] * length
+    z0, z1 = column(gx)
+    grip = Vector((gx, 0, z0 + 0.4 * (z1 - z0)))
+    fx = min(gx + FORE_REACH, lo + length - 0.04)
+    fore = Vector((fx, 0, column(fx)[0] - 0.02)) - grip
+    gun.data.transform(Matrix.Translation(-grip))
+    return gun, fore
 
 
-def sling_dir():
-    t = math.radians(SLING_TILT)
-    return Vector((-math.sin(t), 0, math.cos(t)))
+def fore_offset():
+    """The support hand's point relative to the grip, averaged over the
+    loadout: one animation serves every gun."""
+    total = Vector()
+    for (name, length), _ in LOADOUT:
+        gun, fore = gripped(name, length)
+        total += fore
+        bpy.data.objects.remove(gun, do_unlink=True)
+    return total / len(LOADOUT)
 
 
-def strap(rig, pts, back_y, mat):
-    """The sling: from the gun's muzzle end over the right shoulder, diagonally
-    down across the chest, round the left hip and back to the stock."""
-    chest = rig.data.bones["chest"].head_local
-    centre = Vector((0, back_y, chest.z - 0.04))
-    d = sling_dir()
-
-    def on_gun(x):
-        return centre + d * (x / d.x)
-
-    def near(q, tol=0.03):
-        # The torso only: the hands hang close to the hips.
-        return [p for p in pts if abs(p.x - q.x) < tol and abs(p.z - q.z) < tol and p.y > -0.22]
-
-    def front(q):
-        hits = near(q)
-        return Vector((q.x, (min(p.y for p in hits) if hits else -0.12) - 0.008, q.z))
-
-    a = Vector((-0.12, 0, chest.z + 0.2))
-    b = Vector((0.13, 0, chest.z - 0.17))
-    over = max(p.z for p in pts if abs(p.x - a.x) < 0.03 and abs(p.y) < 0.06) + 0.008
-    side_hits = [p for p in pts if 0 < p.x < 0.2 and abs(p.y) < 0.05 and abs(p.z - b.z) < 0.02]
-    side = Vector(((max(p.x for p in side_hits) if side_hits else 0.17) + 0.008, 0.02, b.z - 0.01))
-    line = [on_gun(-0.12) + Vector((0, 0.004, 0)), Vector((a.x, back_y + 0.01, a.z - 0.02)), Vector((a.x, 0, over))]
-    line += [front(a.lerp(b, k / 8)) for k in range(9)]
-    line += [side, on_gun(0.13) + Vector((0, 0.004, 0))]
-    parts = [base.limb(p, q, 0.009, mat, "chest", taper=1.0) for p, q in zip(line, line[1:])]
-    s = base.join(parts, "Sling")
-    rigid_keep(s, rig)
-    return s
-
-
-def rigid_keep(obj, rig):
-    """Like rigid(), for parts built by build_agents' helpers, which already
-    carry their bone's vertex group."""
-    obj.parent = rig
-    obj.matrix_parent_inverse = rig.matrix_world.inverted()
-    mod = obj.modifiers.new("rig", "ARMATURE")
-    mod.object = rig
+def hold(rig, carry, hand):
+    """Put every long gun in the right hand: `carry` is the gun's world pose
+    (grip at its origin) at the moment the hand bone's world matrix is `hand`;
+    the gun is bound rigidly to the hand so it follows it in every clip."""
+    rest = rig.matrix_world @ rig.data.bones["hand.R"].matrix_local
+    m = rest @ hand.inverted() @ carry
+    for i, ((name, length), _) in enumerate(LOADOUT):
+        gun, _ = gripped(name, length)
+        gun.data.transform(m)
+        rigid(gun, rig, "hand.R")
+        gun.name = gun.data.name = f"Gun_{i}"
+    print(f"[guns] {len(LOADOUT)} long guns in hand")
 
 
 def sidearm(rig, pts, i, name, length, leather):
@@ -224,15 +209,12 @@ def sidearm(rig, pts, i, name, length, leather):
 
 
 def arm(rig):
-    """Every role's loadout, all on the one rig; the app shows the agent's own."""
+    """Every role's holstered sidearm, all on the one rig; the app shows the
+    agent's own. The long guns go in the hands after animating (hold())."""
     pts = surface(rig)
     leather = base.material("Gun_Leather", (0.035, 0.03, 0.028), rough=0.75)
-    webbing = base.material("Gun_Webbing", (0.02, 0.022, 0.025), rough=0.9)
-    backs = []
-    for i, ((long_name, long_len), (side_name, side_len)) in enumerate(LOADOUT):
-        backs.append(back_gun(rig, pts, i, long_name, long_len)[1])
+    for i, (_, (side_name, side_len)) in enumerate(LOADOUT):
         sidearm(rig, pts, i, side_name, side_len, leather)
-    strap(rig, pts, max(backs), webbing)
     print(f"[guns] armed {len(LOADOUT)} loadouts")
 
 
