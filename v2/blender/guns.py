@@ -75,8 +75,30 @@ def load(name, length):
             slot.material = bpy.data.materials.get(key) or m
             if slot.material is m:
                 m.name = key
+                solid(m)
     gun.name = gun.data.name = name
     return gun, (hi - lo) * s
+
+
+def solid(m):
+    """The pack's FBX materials import with alpha 0, which glTF exports as a
+    fully cut-out mask: invisible guns. Make them opaque, and let the metal
+    catch the lab's light."""
+    m.blend_method = "OPAQUE"
+    bsdf = next((n for n in (m.node_tree.nodes if m.use_nodes else []) if n.type == "BSDF_PRINCIPLED"), None)
+    if not bsdf:
+        return
+    alpha = bsdf.inputs["Alpha"]
+    for link in list(alpha.links):
+        m.node_tree.links.remove(link)
+    alpha.default_value = 1.0
+    col = bsdf.inputs["Base Color"]
+    if not col.is_linked:
+        c = col.default_value
+        col.default_value = (c[0], c[1], c[2], 1.0)
+    metal = "Metal" in m.name or m.name in ("Gun_Black", "Gun_Black2", "Gun_Grey", "Gun_Main", "Gun_MainDark", "Gun_MainLight")
+    bsdf.inputs["Metallic"].default_value = 0.65 if metal else 0.0
+    bsdf.inputs["Roughness"].default_value = 0.38 if metal else 0.6
 
 
 def rigid(obj, rig, bone):
